@@ -7,14 +7,18 @@ defmodule Adns.Benchmark do
 
   def init(opts) do
     concurrency = Keyword.get(opts, :concurrency, 1000)
+    samples = Keyword.get(opts, :samples, 1000)
+    client = Keyword.get(opts, :client, "stateful")
 
     Adns.Benchmark.Resolver.create_table()
 
-    children = [
-      {Adns.Server.UDP, port: 8000, resolver: Adns.Benchmark.Resolver, name: Adns.Server.UDP},
-      Adns.Client,
-      {Adns.Benchmark.Workers, concurrency: concurrency}
-    ]
+    children =
+      [
+        {Adns.Server.UDP, port: 8000, resolver: Adns.Benchmark.Resolver, name: Adns.Server.UDP},
+        client == "stateful" && Adns.Client,
+        {Adns.Benchmark.Workers, concurrency: concurrency, samples: samples, client: client}
+      ]
+      |> Enum.filter(fn child -> child end)
 
     Adns.Supervisor.init(children, strategy: :one_for_one)
   end
@@ -28,6 +32,13 @@ defmodule Adns.Benchmark do
     len = length(latencies)
     idx = ceil(percentile / 100 * len) - 1
     Enum.at(latencies, max(idx, 0))
+  end
+
+  def underXus(latencies, us) do
+    case Enum.find_index(latencies, fn lat -> lat >= us end) do
+      nil -> 1
+      idx -> idx / length(latencies)
+    end
   end
 
   def stats(seconds \\ 1) do
@@ -48,8 +59,10 @@ defmodule Adns.Benchmark do
 
     min = Enum.at(latencies, 0)
     max = Enum.at(latencies, length(latencies) - 1)
-    ms1 = 1 - Enum.find_index(latencies, fn lat -> lat >= 1000 end) / length(latencies)
+
+    under_1ms = underXus(latencies, 1000)
     mean = mean(latencies)
+
     p50 = pX(latencies, 50)
     p95 = pX(latencies, 95)
     p99 = pX(latencies, 99)
@@ -64,7 +77,7 @@ defmodule Adns.Benchmark do
       p95: p95,
       p99: p99,
       p999: p999,
-      ms1: ms1,
+      under_1ms: under_1ms,
       samples: samples
     }
   end
@@ -80,10 +93,11 @@ defmodule Adns.Benchmark.Workers do
   def init(opts) do
     concurrency = Keyword.get(opts, :concurrency, 1000)
     samples = Keyword.get(opts, :samples, 1000)
+    client = Keyword.get(opts, :client, "stateful")
 
     children =
       for id <- 1..concurrency do
-        Supervisor.child_spec({Task, fn -> loop(samples) end}, id: {:worker, id})
+        Supervisor.child_spec({Task, fn -> start_loop(samples, client) end}, id: {:worker, id})
       end
 
     Supervisor.init(children, strategy: :one_for_one)
@@ -98,7 +112,20 @@ defmodule Adns.Benchmark.Workers do
     :ets.lookup_element(:adns_stats, :latencies, 2)
   end
 
-  defp loop(samples) do
+  defp start_loop(samples, "once") do
+    loop_once(samples)
+  end
+
+  defp start_loop(samples, "stateful") do
+    loop_stateful(samples)
+  end
+
+  defp start_loop(samples, "sustained") do
+    socket = Adns.Client.start_client()
+    loop_sustained(samples, socket)
+  end
+
+  defp loop_stateful(samples) do
     request =
       %Adns.Client.Request{
         address: {127, 0, 0, 1},
@@ -121,7 +148,59 @@ defmodule Adns.Benchmark.Workers do
 
     Adns.Client.request(request, :infinity)
 
-    loop(samples)
+    loop_stateful(samples)
+  end
+
+  defp loop_once(samples) do
+    request =
+      %Adns.Client.Request{
+        address: {127, 0, 0, 1},
+        port: 8000,
+        opcode: 0,
+        rd: 1,
+        questions: [%Adns.Question{qname: "www.test.com", qclass: 0, qtype: 0}]
+      }
+
+    if :rand.uniform(samples) == 1 do
+      start = System.monotonic_time(:microsecond)
+
+      request = %{request | opcode: 1}
+
+      Adns.Client.request_once(request)
+
+      latency = System.monotonic_time(:microsecond) - start
+      register_latency(latency)
+    end
+
+    Adns.Client.request_once(request)
+
+    loop_once(samples)
+  end
+
+  defp loop_sustained(samples, socket) do
+    request =
+      %Adns.Client.Request{
+        address: {127, 0, 0, 1},
+        port: 8000,
+        opcode: 0,
+        rd: 1,
+        questions: [%Adns.Question{qname: "www.test.com", qclass: 0, qtype: 0}]
+      }
+
+    if :rand.uniform(samples) == 1 do
+      start = System.monotonic_time(:microsecond)
+
+      request = %{request | opcode: 1}
+
+      Adns.Client.request_client(socket, request)
+
+      latency = System.monotonic_time(:microsecond) - start
+      register_latency(latency)
+    end
+
+    Adns.Client.request_client(socket, request)
+
+    loop_sustained(samples, socket)
   end
 end
 

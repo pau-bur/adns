@@ -91,17 +91,32 @@ defmodule Adns.Client do
     end
   end
 
+  @spec request(Adns.Client.Request.t()) :: Adns.Client.Response.t()
   def request(req, timeout \\ 3000) do
     GenServer.call(__MODULE__, req, timeout)
   end
 
+  @spec request_once(Adns.Client.Request.t()) :: Adns.Client.Response.t()
   def request_once(req) do
     {:ok, socket} = :gen_udp.open(0, [:binary, active: false])
 
+    res = request_client(socket, req)
+    :gen_udp.close(socket)
+    res
+  end
+
+  @spec start_client() :: :gen_udp.socket()
+  def start_client() do
+    {:ok, socket} = :gen_udp.open(0, [:binary, active: false])
+    socket
+  end
+
+  @spec request_client(:gen_udp.socket(), Adns.Client.Request.t()) :: Adns.Client.Response.t()
+  def request_client(socket, req) do
     id = 0
     req_data = write_request(req, id)
 
-    :ok = :gen_udp.send(socket, req_data)
+    :ok = :gen_udp.send(socket, req.address, req.port, req_data)
 
     {:ok, {_address, _port, packet}} = :gen_udp.recv(socket, 0)
     {^id, res} = read_response(packet)
