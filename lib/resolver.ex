@@ -2,7 +2,7 @@ defmodule Adns.Resolver do
   @moduledoc """
   Behaviour for DNS lookup logic, separate from transport.
 
-  Implement `resolve/2` and pass the module to `Adns.Server.UDP`. `use Adns.Resolver`
+  Implement `c:resolve/2` and pass the module to `Adns.Server.UDP`. `use Adns.Resolver`
   sets the behaviour and common aliases.
   """
 
@@ -27,7 +27,7 @@ end
 
 defmodule Adns.Resolver.Request do
   @moduledoc """
-  Inputs passed to `Adns.Resolver.resolve/2` (opcode, recursion desired, questions).
+  Inputs passed to `c:Adns.Resolver.resolve/2` (opcode, recursion desired, questions).
   """
 
   alias Adns.Question
