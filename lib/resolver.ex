@@ -1,23 +1,37 @@
 defmodule Adns.Resolver do
-  @callback resolve(Adns.Resolver.Request.t()) :: Adns.Resolver.Response.t()
+  @callback resolve(Adns.Resolver.Request.t(), config :: term()) :: Adns.Resolver.Response.t()
+
+  defmacro __using__(_opts) do
+    quote do
+      alias Adns.Resolver
+      @behaviour Resolver
+      alias Adns.Question
+      alias Adns.Client
+      alias Adns.Class
+      alias Adns.Qclass
+      alias Adns.Types
+      alias Adns.Qtypes
+      alias Adns.Opcode
+      alias Adns.Rcode
+      alias Adns.RR
+    end
+  end
 end
 
 defmodule Adns.Resolver.Request do
   alias Adns.Question
-  alias Adns.Types
 
   defstruct [:opcode, :rd, :questions]
 
   @type t() :: %__MODULE__{
-          opcode: Types.uint4(),
-          rd: 0 | 1,
+          opcode: Adns.Opcode.atoms(),
+          rd: boolean(),
           questions: [Question.t()]
         }
 end
 
 defmodule Adns.Resolver.Response do
   alias Adns.RR
-  alias Adns.Types
 
   defstruct [:answers, :authority, :additional, :aa, :ra, :rcode]
 
@@ -25,8 +39,8 @@ defmodule Adns.Resolver.Response do
           answers: [RR.t()],
           authority: [RR.t()],
           additional: [RR.t()],
-          aa: 0 | 1,
-          ra: 0 | 1,
-          rcode: Types.uint4()
+          aa: boolean(),
+          ra: boolean(),
+          rcode: Adns.Rcode.atoms()
         }
 end

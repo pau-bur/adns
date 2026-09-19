@@ -1,18 +1,18 @@
 defmodule Adns.RR.Known do
-  alias Adns.Types
+  alias Adns.Utils.Types
 
   defstruct [:name, :class, :ttl, :rdata]
 
   @type t() :: %__MODULE__{
           name: String.t(),
-          class: Types.uint16(),
+          class: Adns.Class.atoms(),
           ttl: Types.uint32(),
-          rdata: struct()
+          rdata: Adns.RR.rdata()
         }
 end
 
 defmodule Adns.RR.Unhandled do
-  alias Adns.Types
+  alias Adns.Utils.Types
 
   defstruct [:name, :type, :class, :ttl, :rdata]
 
@@ -20,7 +20,7 @@ defmodule Adns.RR.Unhandled do
           %__MODULE__{
             name: String.t(),
             type: Types.uint16(),
-            class: Types.uint16(),
+            class: Adns.Class.atoms(),
             ttl: Types.uint32(),
             rdata: binary()
           }
@@ -33,52 +33,75 @@ defmodule Adns.RR do
   @spec encode(t()) :: binary()
   def encode(%Adns.RR.Unhandled{name: name, type: type, class: class, ttl: ttl, rdata: rdata}) do
     Adns.Label.encode_labels(name) <>
-      <<type::16, class::16, ttl::32, byte_size(rdata)::16, rdata::binary>>
+      <<type::16, Adns.Class.value(class)::16, ttl::32, byte_size(rdata)::16, rdata::binary>>
   end
 
   def encode(%Adns.RR.Known{name: name, class: class, ttl: ttl, rdata: rdata}) do
     type = rdata.__struct__.type()
-    mod = Adns.RR.Registry.find_module(type)
+    atom = rdata.__struct__.atom()
+    mod = Adns.RR.Registry.find_module(atom)
     rdata = mod.encode(rdata)
     encode(%Adns.RR.Unhandled{name: name, type: type, class: class, ttl: ttl, rdata: rdata})
   end
 
-  @spec decode(binary(), binary()) :: {t(), binary()}
-  def decode(data, message) do
-    {name, rest} = Adns.Label.decode_labels(data, message)
-    <<type::16, class::16, ttl::32, length::16, rdata::binary-size(length), rest::binary>> = rest
+  @type rdata() :: struct()
 
-    mod = Adns.RR.Registry.find_module(type)
+  @type rdata_error_reason() :: term()
 
-    rr =
-      if is_nil(mod) do
-        %Adns.RR.Unhandled{
-          name: name,
-          type: type,
-          class: class,
-          ttl: ttl,
-          rdata: rdata
-        }
-      else
-        rdata = mod.decode(rdata, message)
+  @type error_reason() ::
+          Adns.Label.error_reason() | :malformed_rr_metadata | rdata_error_reason()
 
-        %Adns.RR.Known{
-          name: name,
-          class: class,
-          ttl: ttl,
-          rdata: rdata
-        }
+  defp decode_rdata(name, type, class, ttl, rdata, message) do
+    type_num = type
+    type = Adns.Types.atom(type)
+    class = Adns.Class.atom(class)
+
+    if type == :unknown do
+      {:ok,
+       %Adns.RR.Unhandled{
+         name: name,
+         type: type_num,
+         class: class,
+         ttl: ttl,
+         rdata: rdata
+       }}
+    else
+      mod = Adns.RR.Registry.find_module(type)
+
+      with {:ok, rdata} <- mod.decode(rdata, message) do
+        {:ok,
+         %Adns.RR.Known{
+           name: name,
+           class: class,
+           ttl: ttl,
+           rdata: rdata
+         }}
       end
-
-    {rr, rest}
+    end
   end
 
-  @spec decode_rrs(binary(), binary(), non_neg_integer()) :: {[t()], binary()}
-  def decode_rrs(data, _, 0), do: {[], data}
+  @spec decode(binary(), binary()) :: {:ok, {t(), binary()}} | {:error, error_reason()}
+  def decode(data, message) do
+    with {:ok, {name, rest}} <- Adns.Label.decode_labels(data, message),
+         <<type::16, class::16, ttl::32, length::16, rdata::binary-size(length), rest::binary>> <-
+           rest,
+         {:ok, rr} <-
+           decode_rdata(name, type, class, ttl, rdata, message) do
+      {:ok, {rr, rest}}
+    else
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, :malformed_rr_metadata}
+    end
+  end
+
+  @spec decode_rrs(binary(), binary(), non_neg_integer()) ::
+          {:ok, {[t()], binary()}} | {:error, error_reason()}
+  def decode_rrs(data, _, 0), do: {:ok, {[], data}}
 
   def decode_rrs(data, message, n) do
-    {rr, rest} = decode(data, message)
-    {rrs, rest} = decode_rrs(rest, message, n - 1)
-    {[rr | rrs], rest}
+    with {:ok, {rr, rest}} <- decode(data, message),
+         {:ok, {rrs, rest}} <- decode_rrs(rest, message, n - 1) do
+      {:ok, {[rr | rrs], rest}}
+    end
   end
 end

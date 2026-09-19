@@ -10,14 +10,14 @@ defmodule AdnsTest.RR do
   test "unhandled encoding and decoding" do
     message = %Adns.RR.Unhandled{
       name: "name",
-      type: 500,
-      class: 8,
+      type: 202,
+      class: Adns.Class.in(),
       ttl: 900,
       rdata: <<1, 4, 9>>
     }
 
     data = Adns.RR.encode(message)
-    {retrieved, <<>>} = Adns.RR.decode(data, data)
+    {:ok, {retrieved, <<>>}} = Adns.RR.decode(data, data)
 
     assert message == retrieved
   end
@@ -25,13 +25,13 @@ defmodule AdnsTest.RR do
   test "known encoding and decoding" do
     message = %Adns.RR.Known{
       name: "name",
-      class: 8,
+      class: Adns.Class.in(),
       ttl: 900,
       rdata: %Adns.RR.A{address: 135}
     }
 
     data = Adns.RR.encode(message)
-    {retrieved, <<>>} = Adns.RR.decode(data, data)
+    {:ok, {retrieved, <<>>}} = Adns.RR.decode(data, data)
 
     assert message == retrieved
   end

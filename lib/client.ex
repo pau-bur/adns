@@ -1,16 +1,17 @@
 defmodule Adns.Client do
+  require Logger
   use GenServer
 
   defp write_request(%Adns.Client.Request{opcode: opcode, rd: rd, questions: questions}, id) do
     %Adns.Message{
       id: id,
-      qr: 0,
+      qr: :question,
       opcode: opcode,
-      aa: 0,
-      tc: 0,
+      aa: false,
+      tc: false,
       rd: rd,
-      ra: 0,
-      rcode: 0,
+      ra: false,
+      rcode: :ok,
       questions: questions,
       answers: [],
       authority: [],
@@ -20,31 +21,33 @@ defmodule Adns.Client do
   end
 
   defp read_response(message) do
-    %Adns.Message{
-      id: id,
-      qr: _qr,
-      opcode: _opcode,
-      aa: aa,
-      tc: tc,
-      rd: _rd,
-      ra: ra,
-      rcode: rcode,
-      questions: _questions,
-      answers: answers,
-      authority: authority,
-      additional: additional
-    } = Adns.Message.decode(message)
-
-    {id,
-     %Adns.Client.Response{
-       answers: answers,
-       authority: authority,
-       additional: additional,
-       aa: aa,
-       ra: ra,
-       tc: tc,
-       rcode: rcode
-     }}
+    with {:ok,
+          %Adns.Message{
+            id: id,
+            qr: _qr,
+            opcode: _opcode,
+            aa: aa,
+            tc: tc,
+            rd: _rd,
+            ra: ra,
+            rcode: rcode,
+            questions: _questions,
+            answers: answers,
+            authority: authority,
+            additional: additional
+          }} <- Adns.Message.decode(message) do
+      {:ok,
+       {id,
+        %Adns.Client.Response{
+          answers: answers,
+          authority: authority,
+          additional: additional,
+          aa: aa,
+          ra: ra,
+          tc: tc,
+          rcode: rcode
+        }}}
+    end
   end
 
   def start_link(opts) do
@@ -69,57 +72,105 @@ defmodule Adns.Client do
 
   @impl true
   def handle_call(request, from, {socket, id, request_map}) do
-    request_data = write_request(request, id)
-    :ok = :gen_udp.send(socket, request.address, request.port, request_data)
+    genserver_receive = System.monotonic_time(:microsecond)
 
-    request_map = Map.put(request_map, id, from)
-    id = next_id(request_map, id)
-    {:noreply, {socket, id, request_map}}
+    request_data = write_request(request, id)
+
+    client_encode = System.monotonic_time(:microsecond)
+
+    with :ok <- :gen_udp.send(socket, request.address, request.port, request_data) do
+      client_send = System.monotonic_time(:microsecond)
+
+      request_map =
+        Map.put(request_map, id, {from, {genserver_receive, client_encode, client_send}})
+
+      id = next_id(request_map, id)
+      {:noreply, {socket, id, request_map}}
+    else
+      {:error, reason} ->
+        :telemetry.execute([:dns, :client, :error], %{reason: reason}, %{})
+        {:reply, {:error, reason}, {socket, id, request_map}}
+    end
   end
 
   @impl true
   def handle_info({:udp, _socket, _address, _port, packet}, {socket, next_id, request_map}) do
-    {id, response} = read_response(packet)
+    client_receive = System.monotonic_time(:microsecond)
 
-    case Map.pop(request_map, id) do
-      {nil, _} ->
-        {:noreply, {socket, next_id, request_map}}
+    with {:ok, {id, response}} <- read_response(packet) do
+      client_decode = System.monotonic_time(:microsecond)
 
-      {from, request_map} ->
-        GenServer.reply(from, response)
+      case Map.pop(request_map, id) do
+        {nil, _} ->
+          {:noreply, {socket, next_id, request_map}}
+
+        {{from, {genserver_receive, client_encode, client_send}}, request_map} ->
+          timings = %{
+            genserver_receive: genserver_receive,
+            client_encode: client_encode,
+            client_send: client_send,
+            client_receive: client_receive,
+            client_decode: client_decode
+          }
+
+          GenServer.reply(from, {:ok, response, timings, id})
+
+          {:noreply, {socket, next_id, request_map}}
+      end
+    else
+      {:partial, header, reason} ->
+        :telemetry.execute([:dns, :client, :error], %{reason: reason}, %{id: header.id})
+
+      {:error, reason} ->
+        :telemetry.execute([:dns, :client, :error], %{reason: reason}, %{})
         {:noreply, {socket, next_id, request_map}}
     end
   end
 
-  @spec request(Adns.Client.Request.t()) :: Adns.Client.Response.t()
+  @spec request(Adns.Client.Request.t()) :: {:ok, Adns.Client.Response.t()} | {:error, term()}
   def request(req, timeout \\ 3000) do
-    GenServer.call(__MODULE__, req, timeout)
+    request_start = System.monotonic_time(:microsecond)
+
+    with {:ok, res, timings, id} <- GenServer.call(__MODULE__, req, timeout) do
+      request_end = System.monotonic_time(:microsecond)
+
+      :telemetry.execute(
+        [:dns, :client, :done],
+        Map.merge(timings, %{request_start: request_start, request_end: request_end}),
+        %{
+          id: id
+        }
+      )
+
+      {:ok, res}
+    end
   end
 
-  @spec request_once(Adns.Client.Request.t()) :: Adns.Client.Response.t()
+  @spec request_once(Adns.Client.Request.t()) ::
+          {:ok, Adns.Client.Response.t()} | {:error, term()}
   def request_once(req) do
-    {:ok, socket} = :gen_udp.open(0, [:binary, active: false])
-
-    res = request_client(socket, req)
-    :gen_udp.close(socket)
-    res
+    with {:ok, socket} <- :gen_udp.open(0, [:binary, active: false]),
+         {:ok, res} <- request_client(socket, req),
+         :ok <- :gen_udp.close(socket) do
+      {:ok, res}
+    end
   end
 
-  @spec start_client() :: :gen_udp.socket()
+  @spec start_client() :: {:ok, :gen_udp.socket()} | {:error, term()}
   def start_client() do
-    {:ok, socket} = :gen_udp.open(0, [:binary, active: false])
-    socket
+    :gen_udp.open(0, [:binary, active: false])
   end
 
-  @spec request_client(:gen_udp.socket(), Adns.Client.Request.t()) :: Adns.Client.Response.t()
+  @spec request_client(:gen_udp.socket(), Adns.Client.Request.t()) ::
+          {:ok, Adns.Client.Response.t()} | {:error, term()}
   def request_client(socket, req) do
     id = 0
     req_data = write_request(req, id)
 
-    :ok = :gen_udp.send(socket, req.address, req.port, req_data)
-
-    {:ok, {_address, _port, packet}} = :gen_udp.recv(socket, 0)
-    {^id, res} = read_response(packet)
-    res
+    with :ok <- :gen_udp.send(socket, req.address, req.port, req_data),
+         {:ok, {_address, _port, packet}} <- :gen_udp.recv(socket, 0),
+         {:ok, {^id, res}} <- read_response(packet) do
+      {:ok, res}
+    end
   end
 end

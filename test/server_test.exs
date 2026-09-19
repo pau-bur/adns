@@ -7,13 +7,18 @@ defmodule AdnsTest.Server do
   def resolve(%Adns.Resolver.Request{opcode: _opcode, rd: _rd, questions: _questions}) do
     %Adns.Resolver.Response{
       answers: [
-        %Adns.RR.Known{name: "name", class: 0, ttl: 400, rdata: %Adns.RR.A{address: 1231}}
+        %Adns.RR.Known{
+          name: "name",
+          class: Adns.Class.in(),
+          ttl: 400,
+          rdata: %Adns.RR.A{address: 1231}
+        }
       ],
       additional: [],
       authority: [],
-      aa: 1,
-      ra: 1,
-      rcode: 4
+      aa: true,
+      ra: true,
+      rcode: Adns.Rcode.ok()
     }
   end
 
@@ -21,14 +26,20 @@ defmodule AdnsTest.Server do
     response =
       %Adns.Message{
         id: 123,
-        qr: 0,
-        opcode: 0,
-        aa: 0,
-        tc: 0,
-        rd: 1,
-        ra: 0,
-        rcode: 1,
-        questions: [%Adns.Question{qtype: 1, qclass: 1, qname: "www.test.com"}],
+        qr: Adns.Qr.question(),
+        opcode: Adns.Opcode.query(),
+        aa: false,
+        tc: false,
+        rd: true,
+        ra: false,
+        rcode: Adns.Rcode.ok(),
+        questions: [
+          %Adns.Question{
+            qtype: Adns.Qtypes.a(),
+            qclass: Adns.Qclass.in(),
+            qname: "www.test.com"
+          }
+        ],
         answers: [],
         authority: [],
         additional: []
@@ -37,24 +48,30 @@ defmodule AdnsTest.Server do
 
     assert response == %Adns.Message{
              id: 123,
-             qr: 1,
-             opcode: 0,
-             rd: 1,
-             tc: 0,
-             questions: [%Adns.Question{qtype: 1, qclass: 1, qname: "www.test.com"}],
+             qr: Adns.Qr.answer(),
+             opcode: Adns.Opcode.query(),
+             rd: true,
+             tc: false,
+             questions: [
+               %Adns.Question{
+                 qtype: Adns.Qtypes.a(),
+                 qclass: Adns.Qclass.in(),
+                 qname: "www.test.com"
+               }
+             ],
              answers: [
                %Adns.RR.Known{
                  name: "name",
-                 class: 0,
+                 class: Adns.Qclass.in(),
                  ttl: 400,
                  rdata: %Adns.RR.A{address: 1231}
                }
              ],
              additional: [],
              authority: [],
-             aa: 1,
-             ra: 1,
-             rcode: 4
+             aa: true,
+             ra: true,
+             rcode: Adns.Rcode.ok()
            }
   end
 end

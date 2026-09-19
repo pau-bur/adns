@@ -38,29 +38,31 @@ defmodule Adns.RR.Registry do
     atom = codec.atom()
 
     :ets.insert(@table, [
-      {{:type, type}, codec},
-      {{:atom, atom}, type}
+      {{:atom, atom}, codec},
+      {{:type, type}, atom}
     ])
   end
 
-  def find_module(type) do
-    case :ets.lookup(@table, {:type, type}) do
-      [{{:type, ^type}, codec}] -> codec
-      [] -> nil
-    end
-  end
-
-  def to_atom(type) do
-    case find_module(type) do
-      nil -> nil
-      codec -> codec.atom()
-    end
-  end
-
-  def to_type(atom) do
+  def find_module(atom) do
     case :ets.lookup(@table, {:atom, atom}) do
-      [{{:atom, ^atom}, type}] -> type
+      [{{:atom, ^atom}, codec}] -> codec
       [] -> nil
+    end
+  end
+
+  @spec to_atom(Adns.Utils.Types.uint16()) :: atom() | :unknown
+  def to_atom(type) do
+    case :ets.lookup(@table, {:type, type}) do
+      [{{:type, ^type}, atom}] -> atom
+      [] -> :unknown
+    end
+  end
+
+  @spec to_type(atom()) :: Adns.Utils.Types.uint16() | :unknown
+  def to_type(atom) do
+    case find_module(atom) do
+      nil -> :unknown
+      codec -> codec.type()
     end
   end
 end

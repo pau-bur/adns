@@ -29,9 +29,9 @@ defmodule Adns.RR.CNAME do
   end
 
   def decode(data, message) do
-    {labels, _} = Adns.Label.decode_labels(data, message)
-
-    %__MODULE__{cname: labels}
+    with {:ok, {labels, _}} <- Adns.Label.decode_labels(data, message) do
+      {:ok, %__MODULE__{cname: labels}}
+    end
   end
 
   def atom(), do: :CNAME
@@ -56,8 +56,10 @@ defmodule Adns.RR.HINFO do
         <<cpu_length, cpu::binary-size(cpu_length), os_length, os::binary-size(os_length)>>,
         _
       ) do
-    %__MODULE__{cpu: cpu, os: os}
+    {:ok, %__MODULE__{cpu: cpu, os: os}}
   end
+
+  def decode(_, _), do: {:error, :malformed_hinfo}
 
   def atom(), do: :HINFO
   def type(), do: 13
@@ -77,8 +79,9 @@ defmodule Adns.RR.MB do
   end
 
   def decode(data, message) do
-    {labels, _} = Adns.Label.decode_labels(data, message)
-    %__MODULE__{madname: labels}
+    with {:ok, {labels, _}} <- Adns.Label.decode_labels(data, message) do
+      {:ok, %__MODULE__{madname: labels}}
+    end
   end
 
   def atom(), do: :MB
@@ -99,8 +102,9 @@ defmodule Adns.RR.MD do
   end
 
   def decode(data, message) do
-    {labels, _} = Adns.Label.decode_labels(data, message)
-    %__MODULE__{madname: labels}
+    with {:ok, {labels, _}} <- Adns.Label.decode_labels(data, message) do
+      {:ok, %__MODULE__{madname: labels}}
+    end
   end
 
   def atom(), do: :MD
@@ -121,8 +125,9 @@ defmodule Adns.RR.MF do
   end
 
   def decode(data, message) do
-    {labels, _} = Adns.Label.decode_labels(data, message)
-    %__MODULE__{madname: labels}
+    with {:ok, {labels, _}} <- Adns.Label.decode_labels(data, message) do
+      {:ok, %__MODULE__{madname: labels}}
+    end
   end
 
   def atom(), do: :MF
@@ -143,8 +148,9 @@ defmodule Adns.RR.MG do
   end
 
   def decode(data, message) do
-    {labels, _} = Adns.Label.decode_labels(data, message)
-    %__MODULE__{madname: labels}
+    with {:ok, {labels, _}} <- Adns.Label.decode_labels(data, message) do
+      {:ok, %__MODULE__{madname: labels}}
+    end
   end
 
   def atom(), do: :MG
@@ -166,9 +172,10 @@ defmodule Adns.RR.MINFO do
   end
 
   def decode(data, message) do
-    {rmailbx, rest} = Adns.Label.decode_labels(data, message)
-    {emailbx, _} = Adns.Label.decode_labels(rest, message)
-    %__MODULE__{emailbx: emailbx, rmailbx: rmailbx}
+    with {:ok, {rmailbx, rest}} <- Adns.Label.decode_labels(data, message),
+         {:ok, {emailbx, _}} <- Adns.Label.decode_labels(rest, message) do
+      {:ok, %__MODULE__{emailbx: emailbx, rmailbx: rmailbx}}
+    end
   end
 
   def atom(), do: :MINFO
@@ -189,8 +196,9 @@ defmodule Adns.RR.MR do
   end
 
   def decode(data, message) do
-    {labels, _} = Adns.Label.decode_labels(data, message)
-    %__MODULE__{newname: labels}
+    with {:ok, {labels, _}} <- Adns.Label.decode_labels(data, message) do
+      {:ok, %__MODULE__{newname: labels}}
+    end
   end
 
   def atom(), do: :MR
@@ -198,7 +206,7 @@ defmodule Adns.RR.MR do
 end
 
 defmodule Adns.RR.MX do
-  alias Adns.Types
+  alias Adns.Utils.Types
   @behaviour Adns.RR.Codec
 
   defstruct [:preference, :exchange]
@@ -213,9 +221,12 @@ defmodule Adns.RR.MX do
   end
 
   def decode(<<preference::16, rest::binary>>, message) do
-    {labels, _} = Adns.Label.decode_labels(rest, message)
-    %__MODULE__{preference: preference, exchange: labels}
+    with {:ok, {labels, _}} <- Adns.Label.decode_labels(rest, message) do
+      {:ok, %__MODULE__{preference: preference, exchange: labels}}
+    end
   end
+
+  def decode(_), do: {:error, :malformed_mx}
 
   def atom(), do: :MX
   def type(), do: 15
@@ -235,7 +246,7 @@ defmodule Adns.RR.NULL do
   end
 
   def decode(data, _) do
-    %__MODULE__{data: data}
+    {:ok, %__MODULE__{data: data}}
   end
 
   def atom(), do: :NULL
@@ -256,8 +267,9 @@ defmodule Adns.RR.NS do
   end
 
   def decode(data, message) do
-    {labels, _} = Adns.Label.decode_labels(data, message)
-    %__MODULE__{nsdname: labels}
+    with {:ok, {labels, _}} <- Adns.Label.decode_labels(data, message) do
+      {:ok, %__MODULE__{nsdname: labels}}
+    end
   end
 
   def atom(), do: :NS
@@ -278,8 +290,9 @@ defmodule Adns.RR.PTR do
   end
 
   def decode(data, message) do
-    {labels, _} = Adns.Label.decode_labels(data, message)
-    %__MODULE__{ptrdname: labels}
+    with {:ok, {labels, _}} <- Adns.Label.decode_labels(data, message) do
+      {:ok, %__MODULE__{ptrdname: labels}}
+    end
   end
 
   def atom(), do: :PTR
@@ -287,7 +300,7 @@ defmodule Adns.RR.PTR do
 end
 
 defmodule Adns.RR.SOA do
-  alias Adns.Types
+  alias Adns.Utils.Types
   @behaviour Adns.RR.Codec
 
   defstruct [:mname, :rname, :serial, :refresh, :retry, :expire, :minimum]
@@ -317,19 +330,23 @@ defmodule Adns.RR.SOA do
   end
 
   def decode(data, message) do
-    {mname, rest} = Adns.Label.decode_labels(data, message)
-    {rname, rest} = Adns.Label.decode_labels(rest, message)
-    <<serial::32, refresh::32, retry::32, expire::32, minimum::32>> = rest
-
-    %__MODULE__{
-      mname: mname,
-      rname: rname,
-      serial: serial,
-      refresh: refresh,
-      retry: retry,
-      expire: expire,
-      minimum: minimum
-    }
+    with {:ok, {mname, rest}} <- Adns.Label.decode_labels(data, message),
+         {:ok, {rname, rest}} <- Adns.Label.decode_labels(rest, message),
+         <<serial::32, refresh::32, retry::32, expire::32, minimum::32>> <- rest do
+      {:ok,
+       %__MODULE__{
+         mname: mname,
+         rname: rname,
+         serial: serial,
+         refresh: refresh,
+         retry: retry,
+         expire: expire,
+         minimum: minimum
+       }}
+    else
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, :malformed_soa}
+    end
   end
 
   def atom(), do: :SOA
@@ -350,15 +367,17 @@ defmodule Adns.RR.TXT do
   end
 
   def decode(<<txtdata_length, txtdata::binary-size(txtdata_length)>>, _) do
-    %__MODULE__{txtdata: txtdata}
+    {:ok, %__MODULE__{txtdata: txtdata}}
   end
+
+  def decode(_, _), do: {:error, :malformed_txt}
 
   def atom(), do: :TXT
   def type(), do: 16
 end
 
 defmodule Adns.RR.A do
-  alias Adns.Types
+  alias Adns.Utils.Types
   @behaviour Adns.RR.Codec
 
   defstruct [:address]
@@ -372,15 +391,17 @@ defmodule Adns.RR.A do
   end
 
   def decode(<<address::32>>, _) do
-    %__MODULE__{address: address}
+    {:ok, %__MODULE__{address: address}}
   end
+
+  def decode(_, _), do: {:error, :malformed_a}
 
   def atom(), do: :A
   def type(), do: 1
 end
 
 defmodule Adns.RR.WKS do
-  alias Adns.Types
+  alias Adns.Utils.Types
   @behaviour Adns.RR.Codec
 
   defstruct [:address, :protocol, :bitmap]
@@ -396,8 +417,10 @@ defmodule Adns.RR.WKS do
   end
 
   def decode(<<address::32, protocol::8, bitmap::binary>>, _) do
-    %__MODULE__{address: address, protocol: protocol, bitmap: bitmap}
+    {:ok, %__MODULE__{address: address, protocol: protocol, bitmap: bitmap}}
   end
+
+  def decode(_, _), do: {:error, :malformed_wks}
 
   def atom(), do: :WKS
   def type(), do: 11

@@ -6,36 +6,42 @@ defmodule Adns.Server.TCP do
   end
 
   def init(opts) do
+    port = Keyword.fetch!(opts, :port)
+    resolver = Keyword.fetch!(opts, :resolver)
+    config = Keyword.get(opts, :config)
+
     children = [
       {Task.Supervisor, name: Adns.Server.TCP.TaskSupervisor},
-      {Task, fn -> listen(opts) end}
+      {Task, fn -> listen(port, resolver, config) end}
     ]
 
     Supervisor.init(children, strategy: :one_for_one)
   end
 
-  defp listen(opts) do
+  defp listen(port, resolver, config) do
     {:ok, socket} =
-      :gen_tcp.listen(opts.port, [:binary, packet: :raw, active: false, reuseaddr: true])
+      :gen_tcp.listen(port, [:binary, packet: :raw, active: false, reuseaddr: true])
 
-    accept(socket, opts)
+    accept(socket, resolver, config)
   end
 
-  defp accept(socket, opts) do
+  defp accept(socket, resolver, config) do
     {:ok, client} = :gen_tcp.accept(socket)
 
     Task.Supervisor.start_child(Adns.Server.Tasks, fn ->
-      handle_connection(client, opts.resolver)
+      handle_connection(client, resolver, config)
     end)
   end
 
-  defp handle_connection(socket, resolver) do
+  defp handle_connection(socket, resolver, config) do
     {:ok, <<length::16>>} = :gen_tcp.recv(socket, 2)
     {:ok, message} = :gen_tcp.recv(socket, length)
 
-    response = Adns.Server.handle_message_stream(message, resolver)
-    :ok = :gen_tcp.send(socket, response)
+    case Adns.Server.handle_message_stream(message, resolver, config) do
+      {:ok, response} ->
+        :ok = :gen_tcp.send(socket, response)
+    end
 
-    handle_connection(socket, resolver)
+    handle_connection(socket, resolver, config)
   end
 end

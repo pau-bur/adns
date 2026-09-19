@@ -1,5 +1,5 @@
 defmodule Adns.Message do
-  alias Adns.Types
+  alias Adns.Utils.Types
 
   defstruct [
     :id,
@@ -18,13 +18,13 @@ defmodule Adns.Message do
 
   @type t() :: %__MODULE__{
           id: Types.uint16(),
-          qr: 0 | 1,
-          opcode: Types.uint4(),
-          aa: 0 | 1,
-          tc: 0 | 1,
-          rd: 0 | 1,
-          ra: 0 | 1,
-          rcode: Types.uint4(),
+          qr: Adns.Qr.atoms(),
+          opcode: Adns.Opcode.atoms(),
+          aa: boolean(),
+          tc: boolean(),
+          rd: boolean(),
+          ra: boolean(),
+          rcode: Adns.Rcode.atoms(),
           questions: [Adns.Question.t()],
           answers: [Adns.RR.t()],
           authority: [Adns.RR.t()],
@@ -70,27 +70,38 @@ defmodule Adns.Message do
     header_data <> questions_data <> rr_data
   end
 
-  @spec decode(binary()) :: t()
-  def decode(message) do
-    {header, rest} = Adns.Header.decode(message)
-    {questions, rest} = Adns.Question.decode_questions(rest, message, header.qdcount)
-    {answers, rest} = Adns.RR.decode_rrs(rest, message, header.ancount)
-    {authority, rest} = Adns.RR.decode_rrs(rest, message, header.nscount)
-    {additional, _} = Adns.RR.decode_rrs(rest, message, header.arcount)
+  @spec decode(binary()) ::
+          {:ok, t()}
+          | {:error, Adns.Header.error_reason()}
+          | {:partial, Adns.Header.t(),
+             Adns.Question.error_reason()
+             | Adns.RR.error_reason()}
 
-    %__MODULE__{
-      id: header.id,
-      qr: header.qr,
-      opcode: header.opcode,
-      aa: header.aa,
-      tc: header.tc,
-      rd: header.rd,
-      ra: header.ra,
-      rcode: header.rcode,
-      questions: questions,
-      answers: answers,
-      authority: authority,
-      additional: additional
-    }
+  def decode(message) do
+    with {:ok, {header, rest}} <- Adns.Header.decode(message) do
+      with {:ok, {questions, rest}} <-
+             Adns.Question.decode_questions(rest, message, header.qdcount),
+           {:ok, {answers, rest}} <- Adns.RR.decode_rrs(rest, message, header.ancount),
+           {:ok, {authority, rest}} <- Adns.RR.decode_rrs(rest, message, header.nscount),
+           {:ok, {additional, _}} <- Adns.RR.decode_rrs(rest, message, header.arcount) do
+        {:ok,
+         %__MODULE__{
+           id: header.id,
+           qr: header.qr,
+           opcode: header.opcode,
+           aa: header.aa,
+           tc: header.tc,
+           rd: header.rd,
+           ra: header.ra,
+           rcode: header.rcode,
+           questions: questions,
+           answers: answers,
+           authority: authority,
+           additional: additional
+         }}
+      else
+        {:error, reason} -> {:partial, header, reason}
+      end
+    end
   end
 end

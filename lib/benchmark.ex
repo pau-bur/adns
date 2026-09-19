@@ -1,22 +1,60 @@
 defmodule Adns.Benchmark do
   use Supervisor
+  alias Adns.Class
+  alias Adns.RR
+  alias Adns.Qtypes
+  alias Adns.Qclass
+  alias Adns.Question
+  alias Adns.Resolver.Cache
 
   def start_link(opts \\ []) do
     Supervisor.start_link(__MODULE__, opts)
   end
 
+  defp cache_data() do
+    [
+      {%Question{qname: "www.test.com", qclass: Qclass.in(), qtype: Qtypes.a()},
+       %RR.Known{name: "test.com", ttl: 3000, class: Class.in(), rdata: %RR.A{address: 12314}}},
+      {%Question{qname: "other.test.com", qclass: Qclass.in(), qtype: Qtypes.cname()},
+       %RR.Known{
+         name: "test.com",
+         ttl: 3000,
+         class: Class.in(),
+         rdata: %RR.CNAME{cname: "www.test.com"}
+       }},
+      {%Question{qname: "some.test.com", qclass: Qclass.in(), qtype: Qtypes.txt()},
+       %RR.Known{name: "test.com", ttl: 3000, class: Class.in(), rdata: %RR.TXT{txtdata: "text"}}}
+    ]
+  end
+
+  def random_question() do
+    data = cache_data()
+    len = length(data)
+    idx = :rand.uniform(len) - 1
+    {question, _} = Enum.at(data, idx)
+    question
+  end
+
   def init(opts) do
     concurrency = Keyword.get(opts, :concurrency, 1000)
     samples = Keyword.get(opts, :samples, 1000)
+    min_latency = Keyword.get(opts, :min_latency, 1000)
     client = Keyword.get(opts, :client, "stateful")
 
-    Adns.Benchmark.Resolver.create_table()
+    Adns.Benchmark.TelemetryHandler.init(sample_rate: samples, min_latency: min_latency)
+
+    cache = Cache.config()
+
+    Enum.each(cache_data(), fn {question, answer} ->
+      Cache.register(cache, question, {[answer], [], []})
+    end)
 
     children =
       [
-        {Adns.Server.UDP, port: 8000, resolver: Adns.Benchmark.Resolver, name: Adns.Server.UDP},
-        client == "stateful" && Adns.Client,
-        {Adns.Benchmark.Workers, concurrency: concurrency, samples: samples, client: client}
+        {Adns.Server.UDP,
+         port: 8000, resolver: Adns.Resolver.Cache, config: cache, name: Adns.Server.UDP},
+        client == "stateful" && {Adns.Client, debug: true},
+        {Adns.Benchmark.Workers, concurrency: concurrency, client: client}
       ]
       |> Enum.filter(fn child -> child end)
 
@@ -42,17 +80,18 @@ defmodule Adns.Benchmark do
   end
 
   def stats(seconds \\ 1) do
-    requests = Adns.Benchmark.Resolver.requests()
+    Adns.Benchmark.TelemetryHandler.start_registering()
     time = System.monotonic_time(:microsecond)
 
     Process.sleep(1000 * seconds)
 
-    new_requests = Adns.Benchmark.Resolver.requests()
+    Adns.Benchmark.TelemetryHandler.stop_registering()
+    requests = Adns.Benchmark.TelemetryHandler.requests()
     elapsed = System.monotonic_time(:microsecond) - time
-    rps = (new_requests - requests) / (elapsed / 1_000_000)
+    rps = requests / (elapsed / 1_000_000)
 
     latencies =
-      Adns.Benchmark.Workers.latencies()
+      Adns.Benchmark.TelemetryHandler.latencies()
       |> Enum.sort()
 
     samples = length(latencies)
@@ -84,6 +123,7 @@ defmodule Adns.Benchmark do
 end
 
 defmodule Adns.Benchmark.Workers do
+  alias Adns.Rcode
   use Supervisor
 
   def start_link(opts) do
@@ -97,146 +137,254 @@ defmodule Adns.Benchmark.Workers do
 
     children =
       for id <- 1..concurrency do
-        Supervisor.child_spec({Task, fn -> start_loop(samples, client) end}, id: {:worker, id})
+        question = Adns.Benchmark.random_question()
+
+        request = %Adns.Client.Request{
+          address: {127, 0, 0, 1},
+          port: 8000,
+          opcode: Adns.Opcode.query(),
+          rd: false,
+          questions: [question]
+        }
+
+        Supervisor.child_spec(
+          {Task,
+           fn ->
+             start_loop(request, samples, client)
+           end},
+          id: {:worker, id}
+        )
       end
 
     Supervisor.init(children, strategy: :one_for_one)
   end
 
-  defp register_latency(latency) do
-    latencies = latencies()
-    :ets.insert(:adns_stats, {:latencies, [latency | latencies]})
+  defp start_loop(request, samples, "once") do
+    loop_once(request, samples)
   end
 
-  def latencies() do
-    :ets.lookup_element(:adns_stats, :latencies, 2)
+  defp start_loop(request, samples, "stateful") do
+    loop_stateful(request, samples)
   end
 
-  defp start_loop(samples, "once") do
-    loop_once(samples)
+  defp start_loop(request, samples, "sustained") do
+    {:ok, socket} = Adns.Client.start_client()
+    loop_sustained(request, samples, socket)
   end
 
-  defp start_loop(samples, "stateful") do
-    loop_stateful(samples)
-  end
-
-  defp start_loop(samples, "sustained") do
-    socket = Adns.Client.start_client()
-    loop_sustained(samples, socket)
-  end
-
-  defp loop_stateful(samples) do
-    request =
-      %Adns.Client.Request{
-        address: {127, 0, 0, 1},
-        port: 8000,
-        opcode: 0,
-        rd: 1,
-        questions: [%Adns.Question{qname: "www.test.com", qclass: 0, qtype: 0}]
-      }
-
-    if :rand.uniform(samples) == 1 do
-      start = System.monotonic_time(:microsecond)
-
-      request = %{request | opcode: 1}
-
-      Adns.Client.request(request, :infinity)
-
-      latency = System.monotonic_time(:microsecond) - start
-      register_latency(latency)
+  defp handle_res(res = %Adns.Client.Response{rcode: rcode}) do
+    if rcode == Rcode.server_failure() do
+      IO.inspect(res)
     end
-
-    Adns.Client.request(request, :infinity)
-
-    loop_stateful(samples)
   end
 
-  defp loop_once(samples) do
-    request =
-      %Adns.Client.Request{
-        address: {127, 0, 0, 1},
-        port: 8000,
-        opcode: 0,
-        rd: 1,
-        questions: [%Adns.Question{qname: "www.test.com", qclass: 0, qtype: 0}]
-      }
+  defp loop_stateful(request, samples) do
+    start = System.monotonic_time(:microsecond)
+    {:ok, res} = Adns.Client.request(request, :infinity)
+    handle_res(res)
 
-    if :rand.uniform(samples) == 1 do
-      start = System.monotonic_time(:microsecond)
+    latency = System.monotonic_time(:microsecond) - start
 
-      request = %{request | opcode: 1}
+    :ok = :telemetry.execute([:dns, :worker, :done], %{latency: latency}, %{})
 
-      Adns.Client.request_once(request)
-
-      latency = System.monotonic_time(:microsecond) - start
-      register_latency(latency)
-    end
-
-    Adns.Client.request_once(request)
-
-    loop_once(samples)
+    loop_stateful(request, samples)
   end
 
-  defp loop_sustained(samples, socket) do
-    request =
-      %Adns.Client.Request{
-        address: {127, 0, 0, 1},
-        port: 8000,
-        opcode: 0,
-        rd: 1,
-        questions: [%Adns.Question{qname: "www.test.com", qclass: 0, qtype: 0}]
-      }
+  defp loop_once(request, samples) do
+    start = System.monotonic_time(:microsecond)
+    {:ok, res} = Adns.Client.request_once(request)
+    handle_res(res)
 
-    if :rand.uniform(samples) == 1 do
-      start = System.monotonic_time(:microsecond)
+    latency = System.monotonic_time(:microsecond) - start
 
-      request = %{request | opcode: 1}
+    :ok = :telemetry.execute([:dns, :worker, :done], %{latency: latency}, %{})
 
-      Adns.Client.request_client(socket, request)
+    loop_once(request, samples)
+  end
 
-      latency = System.monotonic_time(:microsecond) - start
-      register_latency(latency)
-    end
+  defp loop_sustained(request, samples, socket) do
+    start = System.monotonic_time(:microsecond)
+    {:ok, res} = Adns.Client.request_client(socket, request)
+    handle_res(res)
 
-    Adns.Client.request_client(socket, request)
+    latency = System.monotonic_time(:microsecond) - start
 
-    loop_sustained(samples, socket)
+    :ok = :telemetry.execute([:dns, :worker, :done], %{latency: latency}, %{})
+
+    loop_sustained(request, samples, socket)
   end
 end
 
-defmodule Adns.Benchmark.Resolver do
-  @behaviour Adns.Resolver
+defmodule Adns.Benchmark.TelemetryHandler do
+  require Logger
 
-  def create_table() do
+  def init(config) do
+    {:ok, _} = Application.ensure_all_started(:telemetry)
+
+    :logger.update_formatter_config(:default, %{
+      metadata: [
+        :id,
+        :genserver_receive_us,
+        :encode_us,
+        :send_us,
+        :receive_us,
+        :decode_us,
+        :genserver_send_us,
+        :genserver_total_us,
+        :total_us,
+        :handle_us
+      ]
+    })
+
+    :ok =
+      :telemetry.attach_many(
+        "client-telemetry-handler",
+        [[:dns, :client, :done], [:dns, :client, :error]],
+        &__MODULE__.handle_event/4,
+        config
+      )
+
+    :ok =
+      :telemetry.attach(
+        "worker-telemetry-handler",
+        [:dns, :worker, :done],
+        &__MODULE__.handle_event/4,
+        config
+      )
+
+    :ok =
+      :telemetry.attach_many(
+        "server-telemetry-handler",
+        [[:dns, :server, :done], [:dns, :server, :error]],
+        &__MODULE__.handle_event/4,
+        config
+      )
+
     :ets.new(:adns_stats, [
       :named_table,
       :set,
       :public
     ])
 
-    :ets.insert(:adns_stats, [{:requests, 0}, {:latencies, []}])
+    :ets.insert(:adns_stats, [{:requests, 0}, {:latencies, []}, {:started, false}])
+  end
+
+  def started?() do
+    :ets.lookup_element(:adns_stats, :started, 2)
+  end
+
+  def start_registering() do
+    :ets.insert(:adns_stats, {:started, true})
+  end
+
+  def stop_registering() do
+    :ets.insert(:adns_stats, {:started, false})
   end
 
   def requests() do
     :ets.lookup_element(:adns_stats, :requests, 2)
   end
 
-  def increment_requests() do
-    :ets.update_counter(:adns_stats, :requests, {2, 1})
+  defp increment_requests() do
+    if started?() do
+      :ets.update_counter(:adns_stats, :requests, {2, 1})
+    end
   end
 
-  def resolve(%Adns.Resolver.Request{}) do
-    answer = %Adns.RR.Known{name: "name", class: 0, ttl: 3000, rdata: %Adns.RR.A{address: 12345}}
+  defp register_latency(latency) do
+    if started?() do
+      latencies = latencies()
+      :ets.insert(:adns_stats, {:latencies, [latency | latencies]})
+    end
+  end
 
+  def latencies() do
+    :ets.lookup_element(:adns_stats, :latencies, 2)
+  end
+
+  defp sample?(sample_rate) do
+    if sample_rate == :all do
+      true
+    else
+      :rand.uniform(sample_rate) == 1
+    end
+  end
+
+  def handle_event([:dns, :client, :done], timings, metadata,
+        sample_rate: sample_rate,
+        min_latency: min_latency
+      ) do
+    %{
+      request_start: request_start,
+      genserver_receive: genserver_receive,
+      client_encode: client_encode,
+      client_send: client_send,
+      client_receive: client_receive,
+      client_decode: client_decode,
+      request_end: request_end
+    } = timings
+
+    total_us = request_end - request_start
+
+    if sample?(sample_rate) && total_us >= min_latency do
+      diffs = %{
+        genserver_receive_us: genserver_receive - request_start,
+        encode_us: client_encode - genserver_receive,
+        send_us: client_send - client_encode,
+        receive_us: client_receive - client_send,
+        decode_us: client_decode - client_receive,
+        genserver_send_us: request_end - client_decode,
+        genserver_total_us: client_decode - genserver_receive,
+        total_us: total_us
+      }
+
+      {:message_queue_len, len} = Process.info(self(), :message_queue_len)
+      diffs = Map.put(diffs, :queue_len, len)
+      Logger.info("DNS client timings", Map.merge(diffs, metadata))
+    end
+  end
+
+  def handle_event([:dns, :client, :error], reason, metadata, _config) do
+    Logger.info("DNS client error", Map.merge(reason, metadata))
+  end
+
+  def handle_event([:dns, :worker, :done], %{latency: latency}, _metadata,
+        sample_rate: sample_rate,
+        min_latency: _
+      ) do
     increment_requests()
 
-    %Adns.Resolver.Response{
-      answers: [answer],
-      authority: [],
-      additional: [],
-      aa: 1,
-      ra: 0,
-      rcode: 0
-    }
+    if sample?(sample_rate) do
+      register_latency(latency)
+    end
+  end
+
+  def handle_event([:dns, :server, :done], timings, metadata,
+        sample_rate: sample_rate,
+        min_latency: min_latency
+      ) do
+    total_us = timings.encoded_time - timings.received_time
+
+    if sample?(sample_rate) && total_us >= min_latency do
+      %{
+        received_time: received_time,
+        decoded_time: decoded_time,
+        handled_time: handled_time,
+        encoded_time: encoded_time
+      } = timings
+
+      diffs = %{
+        decode_us: decoded_time - received_time,
+        handle_us: handled_time - decoded_time,
+        encode_us: encoded_time - handled_time,
+        total_us: total_us
+      }
+
+      Logger.info("DNS server timings", Map.merge(diffs, metadata))
+    end
+  end
+
+  def handle_event([:dns, :server, :error], reason, metadata, _config) do
+    Logger.info("DNS server error", Map.merge(reason, metadata))
   end
 end

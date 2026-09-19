@@ -9,24 +9,34 @@ defmodule Adns.Label do
     {:label, data, rest}
   end
 
-  @spec decode_labels(binary(), binary()) :: {String.t(), binary()}
+  defp decode_label(_), do: {:error, :malformed_label}
+
+  @type error_reason() :: :malformed_label
+
+  @spec decode_labels(binary(), binary()) ::
+          {:ok, {String.t(), binary()}} | {:error, error_reason()}
   def decode_labels(rest, message) do
     case decode_label(rest) do
+      {:error, reason} ->
+        {:error, reason}
+
       {:end, rest} ->
-        {"", rest}
+        {:ok, {"", rest}}
 
       {:offset, offset, rest} ->
         <<_::binary-size(offset), data_at_offset::binary>> = message
-        {labels, _} = decode_labels(data_at_offset, message)
-        {labels, rest}
+
+        with {:ok, {labels, _}} <- decode_labels(data_at_offset, message) do
+          {:ok, {labels, rest}}
+        end
 
       {:label, label, rest} ->
-        {labels, rest} = decode_labels(rest, message)
-
-        if labels == "" do
-          {label, rest}
-        else
-          {label <> "." <> labels, rest}
+        with {:ok, {labels, rest}} <- decode_labels(rest, message) do
+          if labels == "" do
+            {:ok, {label, rest}}
+          else
+            {:ok, {label <> "." <> labels, rest}}
+          end
         end
     end
   end
