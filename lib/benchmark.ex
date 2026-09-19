@@ -40,8 +40,11 @@ defmodule Adns.Benchmark do
     samples = Keyword.get(opts, :samples, 1000)
     min_latency = Keyword.get(opts, :min_latency, 1000)
     client = Keyword.get(opts, :client, "stateful")
+    telemetry = Keyword.get(opts, :telemetry, true)
 
-    Adns.Benchmark.TelemetryHandler.init(sample_rate: samples, min_latency: min_latency)
+    if telemetry do
+      Adns.Benchmark.TelemetryHandler.init(sample_rate: samples, min_latency: min_latency)
+    end
 
     cache = Cache.config()
 
@@ -269,6 +272,12 @@ defmodule Adns.Benchmark.TelemetryHandler do
     :ets.insert(:adns_stats, [{:requests, 0}, {:latencies, []}, {:started, false}])
   end
 
+  def clean() do
+    :telemetry.detach("client-telemetry-handler")
+    :telemetry.detach("worker-telemetry-handler")
+    :telemetry.detach("server-telemetry-handler")
+  end
+
   def started?() do
     :ets.lookup_element(:adns_stats, :started, 2)
   end
@@ -293,13 +302,14 @@ defmodule Adns.Benchmark.TelemetryHandler do
 
   defp register_latency(latency) do
     if started?() do
-      latencies = latencies()
-      :ets.insert(:adns_stats, {:latencies, [latency | latencies]})
+      id = System.unique_integer([:positive])
+      :ets.insert(:adns_stats, {{:latency, id}, latency})
     end
   end
 
   def latencies() do
-    :ets.lookup_element(:adns_stats, :latencies, 2)
+    :ets.match_object(:adns_stats, {{:latency, :_}, :_})
+    |> Enum.map(fn {{:latency, _key}, latency} -> latency end)
   end
 
   defp sample?(sample_rate) do
@@ -326,7 +336,7 @@ defmodule Adns.Benchmark.TelemetryHandler do
 
     total_us = request_end - request_start
 
-    if sample?(sample_rate) && total_us >= min_latency do
+    if started?() && sample?(sample_rate) && total_us >= min_latency do
       diffs = %{
         genserver_receive_us: genserver_receive - request_start,
         encode_us: client_encode - genserver_receive,
@@ -365,7 +375,7 @@ defmodule Adns.Benchmark.TelemetryHandler do
       ) do
     total_us = timings.encoded_time - timings.received_time
 
-    if sample?(sample_rate) && total_us >= min_latency do
+    if started?() && sample?(sample_rate) && total_us >= min_latency do
       %{
         received_time: received_time,
         decoded_time: decoded_time,

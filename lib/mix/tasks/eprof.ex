@@ -1,4 +1,4 @@
-defmodule Mix.Tasks.Profile do
+defmodule Mix.Tasks.Eprof do
   use Mix.Task
 
   def profile_pids(supervisor) do
@@ -21,9 +21,9 @@ defmodule Mix.Tasks.Profile do
     {opts, _args} = OptionParser.parse!(args, strict: [concurrency: :integer, warmup: :integer])
 
     concurrency = Keyword.get(opts, :concurrency, 1000)
-    warmup = Keyword.get(opts, :warmup, 1000)
+    warmup = Keyword.get(opts, :warmup, 5000)
 
-    {:ok, pid} = Adns.Benchmark.start_link(concurrency: concurrency)
+    {:ok, pid} = Adns.Benchmark.start_link(concurrency: concurrency, telemetry: false)
 
     Process.sleep(warmup)
 
