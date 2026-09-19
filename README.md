@@ -226,7 +226,7 @@ Mapped to `Adns.Header` / `Adns.Message` fields (`id`, `qr`, `opcode`, `aa`, `tc
 | `Adns.Resolver` | Behaviour: `resolve/2` → `Response` |
 | `Adns.Resolver.Cache` | ETS-backed resolver |
 | `Adns.Server` | Decode → resolve → encode; FORMERR on partial |
-| `Adns.Server.UDP` | Multi-worker UDP listener |
+| `Adns.Server.UDP` | Shared-socket UDP listener (`sync:` for inline replies) |
 | `Adns.Client` | Stateful GenServer client + one-shot helpers |
 | `Adns.Supervisor` | Init RR registry, then supervise children |
 

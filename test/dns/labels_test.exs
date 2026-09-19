@@ -20,4 +20,12 @@ defmodule AdnsTest.Label do
 
     assert retrieved == "www.site.com"
   end
+
+  test "root label" do
+    assert {:ok, {"", <<>>}} = Adns.Label.decode_labels(<<0>>, <<0>>)
+  end
+
+  test "malformed label" do
+    assert {:error, :malformed_label} = Adns.Label.decode_labels(<<5, "ab">>, <<5, "ab">>)
+  end
 end
