@@ -2,7 +2,7 @@ defmodule Adns.MixProject do
   use Mix.Project
 
   @version "0.1.0"
-  @source_url "https://github.com/Pepethefrogger/adns"
+  @source_url "https://github.com/pau-bur/adns"
   @description "Elixir DNS codec, concurrent UDP client/server, and pluggable resolvers (RFC 1035)."
 
   def project do
@@ -44,7 +44,7 @@ defmodule Adns.MixProject do
   defp docs do
     [
       main: "readme",
-      extras: ["README.md"],
+      extras: ["README.md", "LICENSE"],
       source_ref: "v#{@version}",
       source_url: @source_url
     ]
