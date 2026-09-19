@@ -11,7 +11,18 @@ defmodule Adns.Benchmark do
     Supervisor.start_link(__MODULE__, opts)
   end
 
-  defp cache_data() do
+  @doc """
+  Starts only the cached UDP server (no Elixir load workers).
+
+  Used by `mix dnsperf` so an external tool can drive the server.
+  """
+  def start_server(opts \\ []) do
+    Supervisor.start_link(__MODULE__, Keyword.put(opts, :mode, :server),
+      name: Adns.Benchmark.Server
+    )
+  end
+
+  def cache_data() do
     [
       {%Question{qname: "www.test.com", qclass: Qclass.in(), qtype: Qtypes.a()},
        %RR.Known{name: "test.com", ttl: 3000, class: Class.in(), rdata: %RR.A{address: 12314}}},
@@ -35,31 +46,49 @@ defmodule Adns.Benchmark do
     question
   end
 
+  defp seed_cache(cache) do
+    Enum.each(cache_data(), fn {question, answer} ->
+      Cache.register(cache, question, {[answer], [], []})
+    end)
+  end
+
   def init(opts) do
+    mode = Keyword.get(opts, :mode, :full)
+    port = Keyword.get(opts, :port, 8000)
+    sync = Keyword.get(opts, :sync, false)
     concurrency = Keyword.get(opts, :concurrency, 1000)
     samples = Keyword.get(opts, :samples, 1000)
     min_latency = Keyword.get(opts, :min_latency, 1000)
     client = Keyword.get(opts, :client, "stateful")
     telemetry = Keyword.get(opts, :telemetry, true)
 
-    if telemetry do
+    if telemetry and mode == :full do
       Adns.Benchmark.TelemetryHandler.init(sample_rate: samples, min_latency: min_latency)
     end
 
     cache = Cache.config()
+    seed_cache(cache)
 
-    Enum.each(cache_data(), fn {question, answer} ->
-      Cache.register(cache, question, {[answer], [], []})
-    end)
+    server_opts = [
+      port: port,
+      resolver: Adns.Resolver.Cache,
+      config: cache,
+      sync: sync
+    ]
 
     children =
-      [
-        {Adns.Server.UDP,
-         port: 8000, resolver: Adns.Resolver.Cache, config: cache, name: Adns.Server.UDP},
-        client == "stateful" && {Adns.Client, debug: true},
-        {Adns.Benchmark.Workers, concurrency: concurrency, client: client}
-      ]
-      |> Enum.filter(fn child -> child end)
+      case mode do
+        :server ->
+          [{Adns.Server.UDP, server_opts}]
+
+        :full ->
+          [
+            {Adns.Server.UDP, server_opts},
+            client == "stateful" && {Adns.Client, debug: true},
+            {Adns.Benchmark.Workers, concurrency: concurrency, client: client}
+          ]
+          |> Enum.filter(& &1)
+      end
 
     Adns.Supervisor.init(children, strategy: :one_for_one)
   end

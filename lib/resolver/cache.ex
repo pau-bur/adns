@@ -1,4 +1,11 @@
 defmodule Adns.Resolver.Cache do
+  @moduledoc """
+  ETS-backed `Adns.Resolver` keyed by question.
+
+  Use `config/1` to create a table, `register/3` to seed records, then pass the
+  table as server `:config`.
+  """
+
   use Adns.Resolver
 
   @spec config(list(term())) :: :ets.table()

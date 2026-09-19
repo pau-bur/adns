@@ -1,4 +1,10 @@
 defmodule Adns.RR.Codec do
+  @moduledoc """
+  Behaviour for typed RDATA encode/decode.
+
+  Implement and register with `Adns.RR.Registry` to support custom RR types.
+  """
+
   alias Adns.Utils.Types
   @callback encode(any()) :: binary()
   @callback decode(binary(), binary()) ::

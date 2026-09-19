@@ -1,4 +1,11 @@
 defmodule Adns.Message do
+  @moduledoc """
+  Full DNS message encode/decode (RFC 1035 §4.1).
+
+  `decode/1` returns `{:partial, header, reason}` when the header is valid but
+  questions or RRs fail — servers can reply with FORMERR using the same ID.
+  """
+
   alias Adns.Utils.Types
 
   defstruct [

@@ -1,4 +1,11 @@
 defmodule Adns.Server do
+  @moduledoc """
+  Message handling for DNS servers: decode → resolve → encode.
+
+  Emits `:telemetry` events under `[:dns, :server, ...]`. Partial decodes
+  produce a FORMERR response with the request ID preserved.
+  """
+
   @spec handle_message_stream(binary(), module(), config :: term()) ::
           {:ok, binary()} | :no_message
   def handle_message_stream(message, resolver, config) do

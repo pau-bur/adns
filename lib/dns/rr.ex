@@ -1,4 +1,8 @@
 defmodule Adns.RR.Known do
+  @moduledoc """
+  Resource record with typed RDATA (registered codec).
+  """
+
   alias Adns.Utils.Types
 
   defstruct [:name, :class, :ttl, :rdata]
@@ -12,6 +16,10 @@ defmodule Adns.RR.Known do
 end
 
 defmodule Adns.RR.Unhandled do
+  @moduledoc """
+  Resource record with unknown type; RDATA kept as a raw binary.
+  """
+
   alias Adns.Utils.Types
 
   defstruct [:name, :type, :class, :ttl, :rdata]
@@ -27,6 +35,12 @@ defmodule Adns.RR.Unhandled do
 end
 
 defmodule Adns.RR do
+  @moduledoc """
+  Resource record encode/decode (RFC 1035 §4.1.3).
+
+  Known types use `Adns.RR.Registry` codecs; unknown types become `Adns.RR.Unhandled`.
+  """
+
   @type t() ::
           Adns.RR.Unhandled.t() | Adns.RR.Known.t()
 

@@ -1,4 +1,11 @@
 defmodule Adns.Label do
+  @moduledoc """
+  DNS domain name labels.
+
+  Decode follows compression pointers (`11` + 14-bit offset) into the full
+  message buffer (RFC 1035 §4.1.4). Encode writes labels without pointers.
+  """
+
   defp decode_label(<<1::2, offset::14, rest::binary>>) do
     {:offset, offset, rest}
   end

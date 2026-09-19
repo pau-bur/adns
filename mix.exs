@@ -1,12 +1,17 @@
 defmodule Adns.MixProject do
   use Mix.Project
 
+  @version "0.1.0"
+  @description "Elixir DNS codec, concurrent UDP client/server, and pluggable resolvers (RFC 1035)."
+
   def project do
     [
       app: :adns,
-      version: "0.1.0",
+      version: @version,
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
+      description: @description,
+      package: package(),
       deps: deps()
     ]
   end
@@ -20,6 +25,16 @@ defmodule Adns.MixProject do
 
   defp extra_applications(:dev), do: [:logger, :telemetry, :wx, :observer, :tools]
   defp extra_applications(_), do: [:logger]
+
+  defp package do
+    [
+      licenses: ["MIT"],
+      links: %{
+        "GitHub" => "https://github.com/pepethefrogger/adns"
+      },
+      files: ~w(lib mix.exs README.md LICENSE mix.lock .formatter.exs bench)
+    ]
+  end
 
   # Run "mix help deps" to learn about dependencies.
   defp deps do

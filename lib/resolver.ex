@@ -1,4 +1,11 @@
 defmodule Adns.Resolver do
+  @moduledoc """
+  Behaviour for DNS lookup logic, separate from transport.
+
+  Implement `resolve/2` and pass the module to `Adns.Server.UDP`. `use Adns.Resolver`
+  sets the behaviour and common aliases.
+  """
+
   @callback resolve(Adns.Resolver.Request.t(), config :: term()) :: Adns.Resolver.Response.t()
 
   defmacro __using__(_opts) do
@@ -19,6 +26,10 @@ defmodule Adns.Resolver do
 end
 
 defmodule Adns.Resolver.Request do
+  @moduledoc """
+  Inputs passed to `Adns.Resolver.resolve/2` (opcode, recursion desired, questions).
+  """
+
   alias Adns.Question
 
   defstruct [:opcode, :rd, :questions]
@@ -31,6 +42,10 @@ defmodule Adns.Resolver.Request do
 end
 
 defmodule Adns.Resolver.Response do
+  @moduledoc """
+  Resolver output: answer sections plus `aa`, `ra`, and `rcode` flags.
+  """
+
   alias Adns.RR
 
   defstruct [:answers, :authority, :additional, :aa, :ra, :rcode]

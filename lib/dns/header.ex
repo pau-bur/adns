@@ -1,4 +1,10 @@
 defmodule Adns.Header do
+  @moduledoc """
+  DNS header section (RFC 1035 §4.1.1).
+
+  Encoded with reserved `Z` bits as `0`; decode requires `Z == 0`.
+  """
+
   alias Adns.Utils.Types
 
   defstruct [

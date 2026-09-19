@@ -4,7 +4,7 @@ defmodule AdnsTest.Server do
   @behaviour Adns.Resolver
 
   @impl true
-  def resolve(%Adns.Resolver.Request{opcode: _opcode, rd: _rd, questions: _questions}) do
+  def resolve(%Adns.Resolver.Request{opcode: _opcode, rd: _rd, questions: _questions}, _config) do
     %Adns.Resolver.Response{
       answers: [
         %Adns.RR.Known{
@@ -44,7 +44,7 @@ defmodule AdnsTest.Server do
         authority: [],
         additional: []
       }
-      |> Adns.Server.handle_message(__MODULE__)
+      |> Adns.Server.handle_message(__MODULE__, nil)
 
     assert response == %Adns.Message{
              id: 123,
@@ -62,7 +62,7 @@ defmodule AdnsTest.Server do
              answers: [
                %Adns.RR.Known{
                  name: "name",
-                 class: Adns.Qclass.in(),
+                 class: Adns.Class.in(),
                  ttl: 400,
                  rdata: %Adns.RR.A{address: 1231}
                }

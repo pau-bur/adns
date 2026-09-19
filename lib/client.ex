@@ -1,4 +1,14 @@
 defmodule Adns.Client do
+  @moduledoc """
+  UDP DNS client with concurrent in-flight request correlation.
+
+  The GenServer path (`start_link/1` + `request/2`) assigns 16-bit IDs, tracks
+  outstanding queries, and matches replies asynchronously. Also provides
+  one-shot (`request_once/1`) and reusable-socket (`request_client/2`) helpers.
+
+  Emits `:telemetry` events under `[:dns, :client, ...]` with phase timings.
+  """
+
   require Logger
   use GenServer
 

@@ -1,4 +1,11 @@
 defmodule Adns.RR.Registry do
+  @moduledoc """
+  ETS registry of RR codecs, keyed by atom and wire type.
+
+  Call `init/1` (or boot via `Adns.Supervisor`) before encoding/decoding messages.
+  Uses `read_concurrency: true` for concurrent lookups.
+  """
+
   @table __MODULE__
 
   def default_codecs() do

@@ -1,4 +1,8 @@
 defmodule Adns.Client.Response do
+  @moduledoc """
+  Parsed DNS reply sections and flags returned by `Adns.Client`.
+  """
+
   alias Adns.RR
 
   defstruct [:answers, :authority, :additional, :aa, :ra, :tc, :rcode]

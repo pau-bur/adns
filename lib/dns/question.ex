@@ -1,4 +1,8 @@
 defmodule Adns.Question do
+  @moduledoc """
+  DNS question section (RFC 1035 §4.1.2): QNAME, QTYPE, QCLASS.
+  """
+
   defstruct [:qname, :qtype, :qclass]
 
   @type t :: %__MODULE__{
